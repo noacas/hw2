@@ -1,57 +1,77 @@
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
 #include "math.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
 #include <ctype.h>
-#include <errno.h>
-
-double const EPSILON = 0.001;
-int const DEFAULT_MAX_ITER = 200;
 
 
 double distance_of_two_points(int d, double *p1, double *p2);
 void update_centroids(int d, int k, double **new_centroids, int* clusters_size);
-int check_convergence(int d, int k, double **centroids, double **new_centroids);
+int check_convergence(int d, int k, double epsilon, double **centroids, double **new_centroids);
 void assign_closest_cluster(int d, int k, double *data_point, double **centroids, double **new_centroids, int *clusters_size);
 int find_closest_cluster(int d, int k, double *data_point, double **centroids);
-int invalid_input();
-void my_error();
+int* allocate_memory_array_of_size(int k);
+double** allocate_memory_array_of_points(int d, int array_size);
+void fill_data_list(int d, int n, double **data, PyObject * data_python);
+PyObject* save_to_output(int d, int k, double **centroids);
+double** runAlg(int d, int k, int n, int max_iter, double epsilon, double **data_points, double **centroids,
+            double **new_centroids, int* clusters_size);
+static PyObject* fit(PyObject *self, PyObject *args);
 
-void initialize_centroids(int d, int k, double **data_points, double **centroids) {
-    int i, j;
-    for (i=0 ; i < k ; i++)
-        for (j=0 ; j < d ; j++)
-            centroids[i][j] = data_points[i][j];
+
+static PyObject* fit(PyObject *self, PyObject *args)
+{
+    int k, max_iter, n, d, *cluster_size;
+    double epsilon;
+    PyObject * init_centroids_python, * data_points_python, *result;
+    double **data_points, **centroids, **new_centroids, **centroids_result;
+    if (!PyArg_ParseTuple(args, "iidiOiO", &k, &max_iter, &epsilon, &d, &init_centroids_python, &n, &data_points_python))
+        return NULL;
+    data_points = allocate_memory_array_of_points(d, n);
+    centroids = allocate_memory_array_of_points(d, k);
+    new_centroids = allocate_memory_array_of_points(d, k);
+    cluster_size = allocate_memory_array_of_size(k);
+    fill_data_list(d, n, data_points, data_points_python);
+    fill_data_list(d, k, centroids, init_centroids_python);
+    save_to_output(d, k, centroids);
+    centroids_result = runAlg(d, k, n, max_iter, epsilon, data_points, centroids, new_centroids, cluster_size);
+    free(data_points);
+    free(cluster_size);
+    result = save_to_output(d, k, centroids_result);
+    free(centroids);
+    free(new_centroids);
+    return result;
 }
 
-void clear_new_centroids(int d, int k, double **new_centroids, int *cluster_size) {
+
+void clear_new_centroids(int d, int k, double **new_centroids, int *clusters_size) {
     int i, j;
     for (i=0 ; i < k ; i++) {
-        cluster_size[i] = 0;
+        clusters_size[i] = 0;
         for (j = 0; j < d; j++)
             new_centroids[i][j] = 0;
     }
 }
 
-void runAlg(int d, int k, int n, int max_iter, double **data_points, double **centroids,
+double ** runAlg(int d, int k, int n, int max_iter, double epsilon, double **data_points, double **centroids,
             double **new_centroids, int* clusters_size){
-    double **temp;
     int iter, i;
-    initialize_centroids(d, k, data_points, centroids);
+    double **temp;
     for (iter=0 ; iter < max_iter ; iter++) {
         for (i=0; i < n ; i++) {
             assign_closest_cluster(d, k, data_points[i], centroids, new_centroids, clusters_size);
         }
         update_centroids(d, k, new_centroids, clusters_size);
-        if (check_convergence(d, k, centroids, new_centroids) == 1) {
-            break;
+        if (check_convergence(d, k, epsilon, centroids, new_centroids) == 1) {
+            return new_centroids;
         }
         temp = new_centroids;
         new_centroids = centroids;
         centroids = temp;
         clear_new_centroids(d, k, new_centroids, clusters_size);
     }
+    return centroids;
 }
+
 
 void assign_closest_cluster(int d, int k, double *data_point, double **centroids, double **new_centroids, int *clusters_size) {
     int j, i = find_closest_cluster(d, k, data_point, centroids);
@@ -83,11 +103,11 @@ void update_centroids(int d, int k, double **new_centroids, int* clusters_size) 
     }
 }
 
-int check_convergence(int d, int k, double **centroids, double **new_centroids) {
+int check_convergence(int d, int k, double epsilon, double **centroids, double **new_centroids) {
     int i;
     for (i=0; i < k ; i++) {
         double distance = distance_of_two_points(d, centroids[i], new_centroids[i]);
-        if (sqrt(distance) >= EPSILON) {
+        if (sqrt(distance) >= epsilon) {
             return 0;
         }
     }
@@ -122,108 +142,57 @@ double** allocate_memory_array_of_points(int d, int array_size) {
     return a;
 }
 
-void find_d_n(int *result, char* input) {
-    FILE *fileptr;
-    int n = 1, d = 0, ch=0;;
-    fileptr = fopen(input, "r");
-    if (fileptr == NULL) {
-        my_error();
-    }
-    while ((ch = fgetc(fileptr)) != '\n') {
-        if (ch == ',')
-            d++;
-    }
-    while(!feof(fileptr))
-    {
-        ch = fgetc(fileptr);
-        if(ch == '\n')
-            n++;
-    }
-    fclose(fileptr);
-    result[0] = d + 1;
-    result[1] = n;
-}
 
-
-void get_data_points(int d, int n, double **data_points, char *input) {
-    FILE *f;
-    int result, i, j;
-    char str[32], *p;
-    double data;
-    f = fopen(input, "r");
-    for (i = 0 ; i < n ; i++) {
-        for (j = 0; j < d; j++) {
-            result = fscanf(f, "%31[^,\n]", str);
-            if (result == 0)
-                my_error();
-            data = strtod(str, &p);
-            data_points[i][j] = data;
-            result = fscanf(f, "%c*", str);
-        }
-    }
-    fclose(f);
-}
-
-void save_to_output(int d, int k, double **centroids, char *output) {
-    FILE *f;
+void fill_data_list(int d, int n, double **data, PyObject * data_python) {
     int i, j;
-    f = fopen(output, "w");
-    for (i = 0 ; i < k ; i++) {
-        for (j = 0; j < d-1; j++) {
-            fprintf(f, "%.4f,", centroids[i][j]);
+    PyObject* inner_list, * py_float;
+    for (i = 0 ; i < n ; i++) {
+        inner_list = PyList_GetItem(data_python, i);
+        for (j = 0; j < d; j++) {
+            py_float = PyList_GetItem(inner_list, j);
+            data[i][j] = PyFloat_AsDouble(py_float);
         }
-        fprintf(f, "%.4f\n", centroids[i][d-1]);
     }
-    fclose(f);
 }
 
-
-void run_logic(int k, int max_iter, char* input, char* output) {
-    int result[2], d, n, *cluster_size;
-    double **data_points, **centroids, **new_centroids;
-    find_d_n(result, input);
-    d = result[0];
-    n = result[1];
-    data_points = allocate_memory_array_of_points(result[0], result[1]);
-    centroids = allocate_memory_array_of_points(d, k);
-    new_centroids = allocate_memory_array_of_points(d, k);
-    cluster_size = allocate_memory_array_of_size(k);
-    get_data_points(d, n, data_points, input);
-    runAlg(d, k, n, max_iter, data_points, centroids, new_centroids, cluster_size);
-    free(data_points);
-    free(new_centroids);
-    free(cluster_size);
-    save_to_output(d, k, centroids, output);
-    free(centroids);
-}
-
-int invalid_input(){
-    printf("Invalid Input!");
-    return 1;
-}
-
-void my_error(){
-    printf("An Error Has Occurred");
-    exit(1);
-}
-
-
-int main(int argc, char *argv[]) {
-    char *p;
-    int k, max_iter = DEFAULT_MAX_ITER;;
-    if ((argc != 5) && (argc != 4))
-        return invalid_input();
-
-    k = strtol(argv[1], &p, 10);
-    if (*p != '\0' || errno != 0 || k <= 1)
-        return invalid_input();
-
-    if (argc == 5) {
-        max_iter =  strtol(argv[2], &p, 10);
-        if (*p != '\0' || errno != 0 || max_iter < 1)
-            return invalid_input();
+PyObject* save_to_output(int d, int k, double **centroids) {
+    int i, j;
+    PyObject *val, *inner_list, *result;
+    result = PyList_New(k);
+    for (i = 0 ; i < k ; i++) {
+        inner_list = PyList_New(d);
+        for (j = 0; j < d; j++) {
+            val = PyFloat_FromDouble(centroids[i][j]);
+            PyList_SetItem(inner_list, j, val);
+        }
+        PyList_SetItem(result, i, inner_list);
     }
-    run_logic(k, max_iter, argv[argc-2], argv[argc-1]);
-    return 0;
+    return result;
 }
 
+static PyMethodDef kmeansMethods[] = {
+        {"fit",
+        (PyCFunction) fit,
+        METH_VARARGS,
+        PyDoc_STR("kmeans alg")},
+        {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "mykmeanssp",
+        NULL,
+        -1,
+        kmeansMethods
+};
+
+PyMODINIT_FUNC
+PyInit_mykmeanssp(void)
+{
+    PyObject *m;
+    m = PyModule_Create(&moduledef);
+    if (!m) {
+        return NULL;
+    }
+    return m;
+}

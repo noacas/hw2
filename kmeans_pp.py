@@ -2,7 +2,7 @@ import math
 import sys
 import numpy as np
 import pandas as pd
-#import mykmeanssp
+import mykmeanssp
 
 DEFAULT_MAX_ITER = 300
 
@@ -41,21 +41,6 @@ def parse_args():
 def kmeans_pp(k, data_points):
     np.random.seed(0)
     indices = data_points[0].to_numpy()
-    add_to_m_index = np.random.choice(indices)
-    m = data_points.loc[data_points[0] == add_to_m_index]
-    for i in range(k-1):
-        d = data_points.apply(min_distance, axis=1, args=[m])
-        sum_d = d.sum()
-        p = d.apply(lambda x: x / sum_d)
-        add_to_m_index = np.random.choice(indices, p=p)
-        add_to_m = data_points.loc[data_points[0] == add_to_m_index]
-        m = pd.concat([m, add_to_m], ignore_index=True)
-    return m.pop(0), m
-
-
-def kmeans_pp_2(k, data_points):
-    np.random.seed(0)
-    indices = data_points[0].to_numpy()
     data_points = data_points.to_numpy()
     data = {indices[i]: data_points[i][1:] for i in range(indices.size)}
     choice = np.random.choice(indices)
@@ -66,7 +51,7 @@ def kmeans_pp_2(k, data_points):
         p = [x / sum_d for x in d]
         choice = np.random.choice(indices, p=p)
         m[choice] = data[choice]
-    return m.keys(), m.values()
+    return m.keys(), [line.tolist() for line in m.values()]
 
 
 def calc_min_dis(point, m):
@@ -89,9 +74,8 @@ def min_distance(data_point, m):
 
 
 def print_result(result):
-    # if it returns in pandas form
-    result.to_csv(sys.stdout, header=False, index=False,
-                  float_format='%.4f')
+    for centroid in result:
+        print(','.join(str(float("%.4f" % data)) for data in centroid))
 
 
 def parse_input_files(file_name_1, file_name_2, k):
@@ -107,12 +91,12 @@ def parse_input_files(file_name_1, file_name_2, k):
 def main():
     k, max_iter, eps, file_name_1, file_name_2 = parse_args()
     data_points = parse_input_files(file_name_1, file_name_2, k)
-    indices, init_centroids = kmeans_pp_2(k, data_points)
-    #indices, init_centroids = kmeans_pp(k, data_points)
-    data_points.pop(0)
+    indices, init_centroids = kmeans_pp(k, data_points)
     print(','.join([str(int(i)) for i in indices]))
-    #result = mykmeanssp.fit(k, max_iter, init_centroids, len(data_points), data_points)
-    #print_result(result)
+    data_points.pop(0)
+    data_points = data_points.values.tolist()
+    result = mykmeanssp.fit(k, max_iter, eps, len(data_points[0]), init_centroids, len(data_points), data_points)
+    print_result(result)
 
 
 if __name__ == '__main__':
